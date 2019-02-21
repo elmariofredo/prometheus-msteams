@@ -10,9 +10,9 @@ BUILD_DATE=$(shell date +%FT%T%z)
 GOFMT_FILES?=$$(find . -name '*.go')
 
 # Symlink into GOPATH
-GITHUB_USERNAME=bzon
+GITHUB_USERNAME=sysincz
 BUILD_DIR=$(GOPATH)/src/github.com/$(GITHUB_USERNAME)/$(BINARY)
-VERSION_PKG=github.com/bzon/prometheus-msteams/cmd
+VERSION_PKG=github.com/$(GITHUB_USERNAME)/prometheus-msteams/cmd
 
 # Setup the -ldflags option for go build here, interpolate the variable values
 LDFLAGS = -ldflags "-X $(VERSION_PKG).version=$(VERSION) -X $(VERSION_PKG).commit=$(COMMIT) -X $(VERSION_PKG).branch=$(BRANCH) -X $(VERSION_PKG).buildDate=$(BUILD_DATE)"
@@ -29,7 +29,7 @@ create_bin_dir:
 	mkdir -p $(BINDIR)
 
 github_release:
-	github-release release -u bzon -r prometheus-msteams -t $(VERSION) -n $(VERSION)
+	github-release release -u $(GITHUB_USERNAME) -r prometheus-msteams -t $(VERSION) -n $(VERSION)
 	
 linux: 
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(BINDIR)/$(BINARY)-linux-$(GOARCH) . 

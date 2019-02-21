@@ -21,17 +21,20 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 
-	"github.com/bzon/prometheus-msteams/alert"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/sysincz/prometheus-msteams/alert"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -135,13 +138,22 @@ func parseConfigFile(f string) *TeamsConfig {
 	return cfg
 }
 
-func server(cmd *cobra.Command, args []string) {
+//HandleSIGHUP Setup SIGHUP signal for reload
+func HandleSIGHUP() chan os.Signal {
+	sig := make(chan os.Signal, 1)
+
+	signal.Notify(sig, syscall.SIGHUP)
+
+	return sig
+}
+
+func runServer() {
 	setLogLevel(logLevel)
 	log.Infof(getVersion())
 
 	teamsCfg := &TeamsConfig{}
 	if configFile != "" {
-		log.Warn("If the 'config' flag is used, the" +
+		log.Info("If the 'config' flag is used, the" +
 			" 'webhook-url' and 'request-uri' flags will be ignored.")
 		teamsCfg = parseConfigFile(configFile)
 	}
@@ -150,7 +162,6 @@ func server(cmd *cobra.Command, args []string) {
 	if len(teamsCfg.Connectors) == 0 {
 		if requestURI == "" || teamsWebhookURL == "" {
 			log.Error("No valid connector configuration found")
-			cmd.Usage()
 			os.Exit(1)
 		}
 		cfgFromFlags := map[string]string{requestURI: teamsWebhookURL}
@@ -158,16 +169,44 @@ func server(cmd *cobra.Command, args []string) {
 	}
 
 	mux := http.NewServeMux()
+	server := serverListenAddress + ":" + strconv.Itoa(serverPort)
+	serv := http.Server{Addr: server, Handler: mux}
 	for _, teamMap := range teamsCfg.Connectors {
 		for uri, webhook := range teamMap {
 			addPrometheusHandler(uri, webhook, mux)
 		}
 	}
+
+	go func() {
+		sig := <-HandleSIGHUP()
+		log.Info("Signal:" + sig.String())
+		log.Info("Stop http server")
+		serv.Shutdown(context.Background())
+	}()
+
 	mux.HandleFunc("/config", teamsCfg.configHandler)
+	mux.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
+		//w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("OK"))
+		log.Debug("Reload OK /reload")
+		//serv.Shutdown(context.Background())
+		syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
+
+	})
 	mux.Handle("/metrics", promhttp.Handler())
-	server := serverListenAddress + ":" + strconv.Itoa(serverPort)
+
 	log.Infof("prometheus-msteams server started listening at %s", server)
-	log.Fatal(http.ListenAndServe(server, mux))
+	if err := serv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+
+}
+
+func server(cmd *cobra.Command, args []string) {
+	for {
+		runServer()
+	}
+
 }
 
 func addPrometheusHandler(uri string, webhook string, mux *http.ServeMux) {
